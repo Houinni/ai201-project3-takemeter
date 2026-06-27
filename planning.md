@@ -58,13 +58,17 @@ Every adjacent boundary produces genuinely ambiguous comments. Each case below n
 *Example:* "Exactly. Half the fanbase is already talking about trading Duren and three firsts for Jaylen Brown." It opens as pure agreement but tacks on a hyperbolic observation that *implies* an opinion.
 **Rule (strip-and-judge):** Remove leading agreement markers ("Exactly," "This," "Facts") and emoji, then judge what remains. Nothing propositional left → `not-a-take`; an unsupported claim remains → `noise`.
 
+**`not-a-take` ↔ `noise` — sarcasm / dismissive mockery.** *(Surfaced by the §8.1 stress-test.)*
+*Example:* "lmaooo not the 'he's just 22' excuse again." It ridicules a position but advances no claim of its own.
+**Rule (mockery rule):** Pure sarcasm/mockery that ridicules a take without advancing its own checkable claim = `not-a-take` (it's joke/social behavior). It's only `noise` if a stand-alone assertion remains after stripping the snark ("that excuse is dumb, he's just bad" → `noise`).
+
 **`noise` ↔ `decent` — the sliver of a reason.**
 *Example:* "Duren is washed, dude vanished against any real center." "Vanished against real centers" looks like a reason but is just a vaguer restatement of the insult.
 **Rule (specificity test):** A reason only counts if it's specific and checkable (a named matchup, stat, or mechanism). Vague restatements don't promote → stays `noise`.
 
 **`decent` ↔ `insightful` — the polished obvious take.** *(Expected to be the worst boundary for agreement.)*
 *Example:* the long Duren-$287M post — specific, balanced, well-written, but the core framing ("pay for the regular season vs. fear the playoff version") is the obvious one.
-**Rule (could-I-have-generated-it test):** `insightful` = a point I could not have produced myself; `decent` = a good version of the point any informed fan reaches. Length and good writing do **not** promote (guard against the "longer = better" confound).
+**Rule (operationalized, from the §8.1 stress-test).** The subjective "could I have generated it?" was too loose, so: `insightful` requires **at least one** of — (a) a specific causal mechanism a casual viewer wouldn't state, (b) non-obvious domain knowledge (a cap rule, a coverage scheme), or (c) a genuinely novel reframe. If the cause named is one a regular fan reaches for (spacing, youth, effort, "no motor"), it's `decent` even when well-phrased. Length and good writing do **not** promote (guard against the "longer = better" confound).
 
 **`insightful` vs. confidently-wrong — the accuracy question.**
 *Example:* "Detroit can't offer that because his cap hold would balloon their Bird rights past the second apron." Sounds expert; may be false.
@@ -72,17 +76,25 @@ Every adjacent boundary produces genuinely ambiguous comments. Each case below n
 
 **The `unsure` escape hatch.** When genuinely torn, tag `unsure` → set aside → adjudicate in batches against the rules above. These items never enter training as a class; forcing a call on truly ambiguous items just injects noise into the labels.
 
-**Cross-cutting rules (every item):** (1) casual/profane tone doesn't demote a comment with real reasoning; (2) strip agreement markers/emoji before judging; (3) judge with parent attached; (4) no length or formatting bonus.
+**Cross-cutting rules (every item):** (1) casual/profane tone doesn't demote a comment with real reasoning; (2) strip agreement markers/emoji before judging; (3) judge with parent attached; (4) no length or formatting bonus; (5) sarcasm without its own claim is `not-a-take`, not `noise`.
+
+> **Stress-test status (§8.1).** Ran 8 boundary comments through these rules. Six resolved cleanly; the two that wobbled forced the **mockery rule** and the **operationalized `decent`↔`insightful` test** above. Full transcript in `rubric_stress_test.md`.
 
 ---
 
 ## 4. Data collection plan
 
-**Source.** Reddit API via PRAW, from r/nba: daily discussion threads, post-game threads, and top-level comments on discussion/analysis posts. For each item I store: comment text, **parent text**, post title, score, comment id, permalink, timestamp. I'll pull from many threads (~20–50) across multiple game days so the sample isn't dominated by one game or team.
+**Source.** r/nba: daily discussion threads, post-game threads, and comments on discussion/analysis posts, across multiple game days so no single game/team dominates. The spec warns *not to let collection become a coding project* (manual copy-paste of 200 takes ~1–2 hrs and keeps me close to the data), so collection stays lightweight: either manual copy-paste or a **minimal** PRAW dump to CSV — no elaborate pipeline.
 
-**Scrape vs. label are separate steps.** Collect a large raw pool (~3,000–5,000 comments) automatically; then **randomly sample** items to hand-label. Random sampling keeps the label distribution honest and leaves a large unlabeled remainder for the test set and error analysis.
+**The `text` column must carry the context I labeled with.** The Colab notebook feeds the model only the `text` column, but my rubric judges each comment *with its parent attached*. So I concatenate context into `text` itself:
+```
+text = "POST: {title}\nPARENT: {parent_comment_or_post_body}\nCOMMENT: {comment}"
+```
+Otherwise I'd label with context the model never sees — a train/label mismatch. (Parent/title are also kept in separate columns for reference, but `text` is what trains.)
 
-**Targets.** Aim for **~300 labeled items** total, with a floor of **~50 per class** so even the rare classes are learnable. A purely random sample will be badly imbalanced (most comments are `not-a-take`/`noise`), so the plan is a hybrid: label one **random** batch first to measure the natural distribution, then **targeted top-up** for the starved classes.
+**CSV schema.** Minimum per the spec: `text`, `label`, `notes`. Plus my extras: `parent`, `post_title`, `score`, `comment_id`, `permalink`, `prelabeled_by_llm`, `llm_label`. One un-split file.
+
+**Targets.** **≥ 200 labeled items** (spec minimum), aiming for a floor of **~40–50 per class** so rare classes are learnable. A purely random sample is badly imbalanced (most comments are `not-a-take`/`noise`), and the spec **fails any dataset where one label > 70%** — so the plan is a hybrid: label a **random** batch first to measure the natural distribution, then **targeted top-up** of the starved classes (almost certainly `decent`/`insightful`) to clear the 70% gate.
 
 **If a label is underrepresented after 200 examples** (most likely `insightful`):
 1. **Targeted sampling, not synthetic data** — pull more candidates from where that class concentrates (long comments, analysis-post threads, high-effort flaired posts) and label those. This biases the *sampling* but keeps every label a real human judgment.
@@ -90,7 +102,7 @@ Every adjacent boundary produces genuinely ambiguous comments. Each case below n
 3. **If still too thin to learn (e.g. < ~30 clean examples), collapse the scheme** — merge `decent`+`insightful` into a single "substantive" class for a 3-class task — and report this as a finding. A reliable 3-class model beats an unreliable 4-class one.
 4. Report the final per-class counts and the natural distribution explicitly; imbalance is a result, not something to hide.
 
-**Inter-annotator check.** Double-label ~100 items with a second annotator (or myself two weeks apart), compute agreement, and rewrite the rubric where disagreements cluster *before* scaling up.
+**Inter-annotator check (stretch / +1pt).** If a second annotator is available, double-label 30+ items, compute Cohen's κ / % agreement, and analyze disagreements. Even without the bonus, doing a small **self** re-label (same items, days apart) is a cheap sanity check on rubric stability before scaling up.
 
 ---
 
@@ -98,51 +110,53 @@ Every adjacent boundary produces genuinely ambiguous comments. Each case below n
 
 Accuracy alone is disqualified up front: with a heavily imbalanced corpus, a model that predicts `not-a-take` for everything could score high accuracy while being useless. The metrics below are chosen around the imbalance and around *which errors actually hurt*.
 
+**Required — the Colab notebook produces these (these define pass/fail):**
 - **Macro-F1 (primary).** Averages F1 across classes equally, so the rare-but-important `insightful` class counts as much as the dominant `not-a-take`. This is the headline number.
-- **Per-class precision / recall + confusion matrix.** I need to see *where* it fails, not just an aggregate. The confusion matrix also reveals whether errors are "near" (decent↔insightful) or "far" (insightful↔not-a-take).
-- **Quadratic Weighted Kappa (QWK).** The classes are roughly ordinal (`noise` < `decent` < `insightful`), so not all mistakes are equal — calling an `insightful` comment `not-a-take` is far worse than calling it `decent`. QWK penalizes distant errors more and credits near-misses, which plain F1 ignores.
-- **Model agreement vs. human ceiling.** I'll compare model-vs-human agreement to the **human-vs-human** agreement measured in §4. Human agreement is the ceiling — a model that matches it is as good as the task allows, and a model far below it has headroom. Reporting the model number without the human ceiling is meaningless.
-- **`insightful` precision and recall, called out separately.** This is the deployment-critical class (see §6), so it gets its own line rather than being averaged away.
-- **Precision@k for the surfacing use case.** If the real product is "show the top 10 takes in this thread," what matters is whether the items it *ranks highest* are actually good — measured as precision@10 on held-out threads.
+- **Per-class precision / recall.** The grading requires at least one per-class metric; I report all three so I can see *where* it fails, not just an aggregate.
+- **Confusion matrix.** Reveals whether errors are "near" (decent↔insightful) or "far" (insightful↔not-a-take) — the single most useful artifact for the error-analysis writeup.
+- **Baseline comparison.** Same metrics for the Groq/prompt baseline on the same test set; the fine-tuned model must clearly beat it.
 
-**Baselines to beat** (so the numbers mean something): a majority-class baseline, and a simple length + keyword logistic-regression baseline. The fine-tuned model has to clearly beat both.
+**Stretch — only computed if I do the extra work (bonus, NOT part of the required bar):**
+- **Quadratic Weighted Kappa (QWK).** Classes are roughly ordinal (`noise` < `decent` < `insightful`); QWK penalizes distant errors more than near-misses. Extra code on top of the notebook.
+- **Inter-annotator agreement vs. model (the human ceiling).** Only meaningful if a *second annotator* double-labels 30+ items (this is the +1 stretch feature). Without it, there is no human ceiling to compare against — so I do **not** make it a required success criterion.
+- **Precision@k for surfacing.** Whether the top-ranked comments are actually good (precision@10 on held-out threads). Maps to the "top takes" product framing but needs a fresh human grading pass at eval time.
 
 ---
 
 ## 6. Definition of success
 
-The product goal is **surfacing**: pull the genuinely good takes out from under the noise. That shapes what "good enough" means — for a surfacing tool, **precision on the good classes matters more than catching every last one.** Concrete, checkable targets:
+The product goal is **surfacing**: pull the genuinely good takes out from under the noise. That shapes what "good enough" means — for a surfacing tool, **precision on the good classes matters more than catching every last one.**
 
-**Genuinely useful (target):**
-- **Macro-F1 ≥ 0.55** on the 4-class task, and **≥ 10 absolute F1 points** above both baselines.
-- **Model-vs-human QWK ≥ 0.60 absolute, and ≥ 0.90 × the human-vs-human QWK** (i.e. at least 90% of the way to the human ceiling).
+**Required success bar (measurable with the notebook alone):**
+- **Macro-F1 ≥ 0.55** on the 4-class task, **and clearly beats the baseline** on the same test set (target ≥ +10 absolute F1 points).
 - **`insightful` precision ≥ 0.70** — when it says a comment is insightful, it's right ≥ 70% of the time (false promotions are what destroy trust in a surfacing tool).
 - **`not-a-take` recall ≥ 0.85** — reliably filters junk, the easiest and highest-volume win.
+- **No catastrophic confusions** — the `insightful` ↔ `not-a-take`/`noise` cells in the confusion matrix stay low (near-misses on the decent↔insightful boundary are tolerable).
 
-**Good enough to deploy in a real community tool (e.g. a "top takes of this thread" widget):**
-- **Precision@10 ≥ 0.80** on held-out threads — of the 10 comments it surfaces as best, ≥ 8 are genuinely `decent`/`insightful` to a human. A reader skimming the widget should rarely hit a dud.
-- `insightful` **recall ≥ 0.50** — it's acceptable to miss some gems (recall), but not to surface garbage (precision); in a high-volume feed, missing half the gems still surfaces plenty.
-- No catastrophic confusions: the rate of `insightful` → `not-a-take`/`noise` (and vice-versa) stays low in the confusion matrix.
+**Stretch bar (bonus; only if the corresponding extra work is done):**
+- **QWK ≥ 0.60**, and — *if a second annotator exists* — within 0.90× of the human-vs-human ceiling.
+- **Precision@10 ≥ 0.80** on held-out threads (the "top takes" widget framing) — of the 10 comments surfaced as best, ≥ 8 are genuinely `decent`/`insightful` to a human.
 
-**Acceptable fallback:** if the 4-class `decent`/`insightful` split proves unlearnable (§4), a **3-class** model (`not-a-take` / `noise` / `substantive`) meeting the analogous macro-F1 and precision@10 bars is a legitimate success and an honest finding about the limits of the label design.
+**Acceptable fallback:** if the 4-class `decent`/`insightful` split proves unlearnable (§4), a **3-class** model (`not-a-take` / `noise` / `substantive`) hitting the analogous macro-F1 and precision bars is a legitimate success and an honest finding about the limits of the label design.
 
 ---
 
 ## 7. Self-review — are the success criteria objectively checkable?
 
-Each §6 target maps to a single computable number on a held-out test set, so at the end I can state pass/fail unambiguously:
+Each target maps to a single computable number on the held-out test set, so at the end I can state pass/fail unambiguously:
 
-| Criterion | How it's decided | Objective? |
-|---|---|---|
-| Macro-F1 ≥ 0.55 & +10 over baselines | compute macro-F1 for model and both baselines | ✅ yes |
-| QWK ≥ 0.60 and ≥ 0.90× human ceiling | compute QWK; human ceiling measured in §4 | ✅ yes (requires the human double-label set to exist) |
-| `insightful` precision ≥ 0.70 | per-class precision from confusion matrix | ✅ yes |
-| `not-a-take` recall ≥ 0.85 | per-class recall | ✅ yes |
-| Precision@10 ≥ 0.80 | rank held-out threads, human-check top 10 | ✅ yes, but needs a small fresh human judgment pass at eval time |
+| Criterion | Tier | How it's decided | Objective? |
+|---|---|---|---|
+| Macro-F1 ≥ 0.55 & beats baseline | required | macro-F1 for model + baseline (notebook) | ✅ yes |
+| `insightful` precision ≥ 0.70 | required | per-class precision from confusion matrix | ✅ yes |
+| `not-a-take` recall ≥ 0.85 | required | per-class recall | ✅ yes |
+| No catastrophic confusions | required | read off the confusion matrix | ✅ yes |
+| QWK ≥ 0.60 (+ human ceiling) | stretch | extra code; ceiling needs 2nd annotator | ✅ if the work is done |
+| Precision@10 ≥ 0.80 | stretch | rank held-out threads, human-check top 10 | ✅ needs a fresh human pass |
 
-**Gaps I'm closing:** (1) QWK-vs-ceiling is only meaningful if the human inter-annotator set is actually collected — so that double-labeling in §4 is a hard prerequisite, not optional. (2) Precision@10 requires a human to grade the model's top-10 at eval time; I'll reserve a handful of unlabeled threads specifically for this so the test isn't run on training data. (3) All thresholds are reported **with the test-set size and per-class counts**, since an F1 from 12 `insightful` examples is not the same claim as one from 60 — small-sample numbers will be flagged as provisional.
+**Gaps closed:** (1) The **required** bar uses only notebook outputs, so it's determinable even if I do zero stretch work — my success criteria no longer secretly depend on bonus features. (2) The human-ceiling and precision@10 criteria are now explicitly **stretch**; each needs its own data (a second annotator's labels; a few reserved unlabeled threads), and I only claim them if that data exists. (3) Every threshold is reported **with the test-set size and per-class counts** — an F1 from 12 `insightful` examples is not the same claim as one from 50, so small-sample numbers are flagged provisional.
 
-Conclusion: the criteria are specific and falsifiable; the only dependencies are that the human-agreement set and a held-out surfacing set get built, both of which are already in the §4 plan.
+Conclusion: the required criteria are specific, falsifiable, and computable from the notebook alone; the stretch criteria are clearly fenced off so a missing second annotator can't sink the project.
 
 ---
 
@@ -176,12 +190,15 @@ There's no application code to generate in this project, so AI tools earn their 
 ## Appendix — pipeline summary
 
 ```
-1. PRAW scrape ~3–5k comments (text + parent + title + score + ids) → CSV
-2. Random sample → measure natural class distribution
-3. Hand-label ~300 (≥50/class via targeted top-up); use `unsure` freely
-4. Double-label ~100 → Krippendorff α / QWK → rewrite rubric where it cracks
-5. Fine-tune classifier
-6. Evaluate: macro-F1, per-class P/R, confusion matrix, QWK vs human ceiling,
-   insightful P/R, precision@10 — against majority + length/keyword baselines
-7. Error analysis: where it works, where it falls apart
+0. [DONE] Stress-test rubric (§8.1) → tightened mockery + decent/insightful rules
+1. Collect ≥200 r/nba comments (manual or minimal PRAW); build text =
+   "POST/PARENT/COMMENT" so the model sees the context I labeled with
+2. Random batch first → measure natural class distribution
+3. Hand-label to ≥200, ≥~40–50/class via targeted top-up; keep no label >70%;
+   log ≥3 hard cases; use `unsure` freely → single un-split CSV
+4. (stretch) 2nd annotator double-labels 30+ → Cohen's κ → fix rubric cracks
+5. Fine-tune classifier (Colab); record base model + one justified train decision
+6. Evaluate vs. baseline on same test set: macro-F1, per-class P/R, confusion
+   matrix [required]; QWK, precision@10 [stretch]
+7. Error analysis: ≥3 wrong predictions explained + one named failure pattern
 ```
